@@ -16,6 +16,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
+import android.media.ExifInterface;
 import android.media.Image;
 import android.media.ImageReader;
 import android.net.Uri;
@@ -30,6 +31,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -61,7 +63,6 @@ public class MainActivity extends AppCompatActivity {
     private CameraManager cameraManager;
     private Button captureButton;
     private Button loadButton;
-    private Button saveParamsButton;
 
 
     private String whiteBalance = "auto";
@@ -69,13 +70,8 @@ public class MainActivity extends AppCompatActivity {
     private long exposureTime = 100000L;
     private TextView parametersTextView;
 
-    private EditText whiteBalanceEditText;
-    private EditText isoEditText;
-    private EditText exposureTimeEditText;
     private static final int REQUEST_STORAGE_PERMISSION = 1001;
-    private ImageReader imageReader;
-    private static final int IMAGE_WIDTH = 1080; // 根据相机支持的分辨率调整
-    private static final int IMAGE_HEIGHT = 1920;
+
 
 
     @Override
@@ -86,12 +82,8 @@ public class MainActivity extends AppCompatActivity {
         textureView = findViewById(R.id.textureView);
         captureButton = findViewById(R.id.captureButton);
         loadButton = findViewById(R.id.loadButton);
-        saveParamsButton = findViewById(R.id.saveParamsButton);
         parametersTextView = findViewById(R.id.parametersTextView); // Initialize the TextView
 
-        whiteBalanceEditText = findViewById(R.id.whiteBalanceEditText);
-        isoEditText = findViewById(R.id.isoEditText);
-        exposureTimeEditText = findViewById(R.id.exposureTimeEditText);
 
         cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
 
@@ -102,13 +94,15 @@ public class MainActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, 100);
         }
 
-        // Check if we have storage permissions
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        // Check for storage permissions
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
+            // 请求权限
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE_PERMISSION);
+                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    REQUEST_STORAGE_PERMISSION);
         }
-
 
         textureView.setSurfaceTextureListener(surfaceTextureListener);
 
@@ -120,52 +114,38 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(MainActivity.this, "Camera Parameters Loaded", Toast.LENGTH_SHORT).show();
         });
 
-        saveParamsButton.setOnClickListener(v -> saveCameraParameters());
-
     }
 
-    private void saveCameraParameters() {
-        try {
-            // Get parameters from user input
-            String inputWhiteBalance = whiteBalanceEditText.getText().toString().trim();
-            String inputIso = isoEditText.getText().toString().trim();
-            String inputExposureTime = exposureTimeEditText.getText().toString().trim();
 
-            // Default values if inputs are empty
-            if (inputWhiteBalance.isEmpty()) inputWhiteBalance = "auto";
-            if (inputIso.isEmpty()) inputIso = "100";
-            if (inputExposureTime.isEmpty()) inputExposureTime = "100000";
-
-            // Convert ISO and exposure time to appropriate types
-            iso = Integer.parseInt(inputIso);
-            exposureTime = Long.parseLong(inputExposureTime);
-
-            // Save parameters to internal storage
-            FileOutputStream fos = openFileOutput("camera_parameters.txt", MODE_PRIVATE);
-            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(fos));
-
-            writer.write("white_balance=" + inputWhiteBalance + "\n");
-            writer.write("ISO=" + inputIso + "\n");
-            writer.write("exposure_time=" + inputExposureTime + "L\n");
-
-            writer.close();
-            Toast.makeText(this, "Camera parameters saved", Toast.LENGTH_SHORT).show();
-
-        } catch (IOException e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Error saving camera parameters: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Storage permission granted", Toast.LENGTH_SHORT).show();
+                // 继续操作文件读取
+            } else {
+                Toast.makeText(this, "Storage permission denied", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
     private void readCameraParameters() {
         try {
             // Open the file and read parameters
-            FileInputStream fis = openFileInput("camera_parameters.txt");
+//            FileInputStream fis = openFileInput("camera_parameters.txt");
+//            BufferedReader reader = new BufferedReader(new InputStreamReader(fis));
+            // external storage
+            File downloadFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File cameraParamsFile = new File(downloadFolder, "camera_parameters.txt");
+
+            // open and read
+            FileInputStream fis = new FileInputStream(cameraParamsFile);
             BufferedReader reader = new BufferedReader(new InputStreamReader(fis));
 
             String line;
             while ((line = reader.readLine()) != null) {
-                Log.d(TAG, "Reading line: " + line); // Debug log for reading lines
+                Log.d(TAG, "Reading line: " + line);
                 if (line.startsWith("white_balance=")) {
                     whiteBalance = line.split("=")[1].trim();
                 } else if (line.startsWith("ISO=")) {
@@ -177,24 +157,21 @@ public class MainActivity extends AppCompatActivity {
             }
             reader.close();
 
-            // Log parameters for debugging
             Log.d(TAG, "Loaded parameters: whiteBalance=" + whiteBalance + ", ISO=" + iso + ", exposureTime=" + exposureTime);
 
-            // Update the TextView with the current parameters
             String parametersText = "White Balance: " + whiteBalance + "\n"
                     + "ISO: " + iso + "\n"
                     + "Exposure Time: " + exposureTime + " ns";
             parametersTextView.setText(parametersText);
 
-            // Ensure TextView update happens on the main thread
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    parametersTextView.setText(parametersText);  // Update UI with loaded parameters
+                    parametersTextView.setText(parametersText);
                 }
             });
 
-        } catch (Exception e) {
+        } catch (IOException e) {
             e.printStackTrace();
             Toast.makeText(this, "Error reading camera parameters: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -237,7 +214,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onOpened(CameraDevice camera) {
             cameraDevice = camera;
-            setupImageReader();
+//            setupImageReader();
             startPreview();
         }
 
@@ -317,6 +294,11 @@ public class MainActivity extends AppCompatActivity {
                     // Handle capture completion (e.g., display success or save the image)
                     Toast.makeText(MainActivity.this, "Capture Completed", Toast.LENGTH_SHORT).show();
 
+//                    saveImageToGallery();
+//                    saveImageToDownloadFolder();
+                    saveImageWithExifData();
+
+
                     startPreview();  // Restart preview after capture
                 }
             };
@@ -328,51 +310,100 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void setupImageReader() {
-        imageReader = ImageReader.newInstance(IMAGE_WIDTH, IMAGE_HEIGHT, ImageFormat.JPEG, 1);
-        imageReader.setOnImageAvailableListener(onImageAvailableListener, null);
-    }
+//    private void saveImageToGallery() {
+//        try {
+//            Bitmap bitmap = textureView.getBitmap();
+//            if (bitmap == null) {
+//                Toast.makeText(this, "Failed to capture image from TextureView", Toast.LENGTH_SHORT).show();
+//                return;
+//            }
+//            ContentValues values = new ContentValues();
+//            values.put(MediaStore.Images.Media.TITLE, "Camera Capture");
+//            values.put(MediaStore.Images.Media.DISPLAY_NAME, "camera_capture_" + System.currentTimeMillis() + ".jpg");
+//            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+//            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+//
+//            // Insert the image into MediaStore
+//            ContentResolver resolver = getContentResolver();
+//            Uri imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+//
+//            try (OutputStream outStream = resolver.openOutputStream(imageUri)) {
+//                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outStream);
+//                outStream.flush();
+//            }
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//            Toast.makeText(this, "Error saving image to gallery: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+//        }
+//    }
 
-    private final ImageReader.OnImageAvailableListener onImageAvailableListener = reader -> {
-        Image image = null;
-        try {
-            image = reader.acquireLatestImage();
-            if (image != null) {
-                ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                byte[] bytes = new byte[buffer.remaining()];
-                buffer.get(bytes);
-                saveImageToGallery(bytes);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (image != null) {
-                image.close();
-            }
-        }
-    };
 
-    private void saveImageToGallery(byte[] imageData) {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
-        String fileName = "IMG_" + timeStamp + ".jpg";
+    private void saveImageToDownloadFolder() {
+        // Save the image to the Downloads folder
+        File downloadFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        String imageFileName = "camera_capture_" + System.currentTimeMillis() + ".jpg";
+        File imageFile = new File(downloadFolder, imageFileName);
 
-        // 使用MediaStore保存到相册（Android Q及以上推荐方式）
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
-        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/YourAppName");
-
-        ContentResolver resolver = getContentResolver();
-        Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-
-        try (OutputStream out = resolver.openOutputStream(uri)) {
-            out.write(imageData);
-            Toast.makeText(this, "Photo saved to gallery", Toast.LENGTH_SHORT).show();
+        try (FileOutputStream fos = new FileOutputStream(imageFile)) {
+            Bitmap bitmap = textureView.getBitmap();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+            Toast.makeText(MainActivity.this, "Image saved to Downloads folder", Toast.LENGTH_SHORT).show();
         } catch (IOException e) {
             e.printStackTrace();
-            Toast.makeText(this, "Failed to save photo", Toast.LENGTH_SHORT).show();
+            Toast.makeText(MainActivity.this, "Error saving image to Downloads", Toast.LENGTH_SHORT).show();
         }
     }
+
+    private void saveImageWithExifData() {
+        try {
+            Bitmap bitmap = textureView.getBitmap();
+            if (bitmap == null) {
+                Toast.makeText(this, "Failed to capture image from TextureView", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // Get the download folder path
+            File downloadFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!downloadFolder.exists()) {
+                downloadFolder.mkdirs();
+            }
+
+            String imageFileName = "camera_capture_" + System.currentTimeMillis() + ".jpg";
+            File imageFile = new File(downloadFolder, imageFileName);
+
+            // Save the image to the file
+            try (FileOutputStream fos = new FileOutputStream(imageFile)) {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+                fos.flush();
+
+                // Now write Exif data (camera parameters like ISO, exposure time, etc.)
+                writeExifData(imageFile);
+
+                Toast.makeText(this, "Image saved to Downloads folder", Toast.LENGTH_SHORT).show();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error saving image to Downloads folder: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void writeExifData(File imageFile) {
+        try {
+            ExifInterface exif = new ExifInterface(imageFile.getAbsolutePath());
+
+            // Set Exif metadata
+            exif.setAttribute(ExifInterface.TAG_ISO, String.valueOf(iso));  // ISO
+            exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.valueOf(exposureTime));  // Exposure time
+            exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, whiteBalance);  // White balance
+
+            // You can add more metadata here like shutter speed, lens info, etc.
+            exif.saveAttributes();  // Save the Exif data
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error writing Exif data: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
 
     private String getBackCameraId() {
         try {
@@ -388,8 +419,6 @@ public class MainActivity extends AppCompatActivity {
         }
         return null;
     }
-
-
 
 
 }
